@@ -180,6 +180,36 @@ crop flag for differing readings.
 - The export includes **all** processed rows, irrespective of the UI filter.
   It does not change document sharing permissions or send email.
 
+## Copy DIFF images
+
+After an OCR run, or after opening a saved report, click **Copy DIFF images…**
+and choose a destination folder. This copies **every result currently marked
+DIFF**, regardless of the table filter. SAME, CLIPPED and LOWCONFIDENCE images
+are excluded. Original files and report statuses remain unchanged.
+
+The OCR result is added literally before the image extension:
+
+```text
+26-09-08_17-06-27_DOVER24_GSV81G_ABC.jpg
+→ 26-09-08_17-06-27_DOVER24_GSV81G_ABC_<GSV81C>.jpg
+```
+
+- Copies are placed directly in the chosen folder, not in mirrored subfolders.
+- Existing destination files are **never overwritten**. For conflicting names,
+  a number is added before the OCR suffix, for example `photo_2_<ABC123>.jpg`.
+- If an identical copy already exists, it is skipped. Copying again is safe.
+- Copying runs in a background thread with progress. **Stop** finishes the current
+  file and keeps completed copies. Missing/unreadable files are reported, and
+  the remaining files are still attempted. Partial files from failed copies
+  are removed when possible.
+- A local JSON copy log is saved in the report's run directory; the destination
+  folder contains only the copied images. No Google Sheet is changed.
+- Prefer a destination outside the scanned source tree. If it is inside, the
+  app asks for confirmation because future recursive scans will include copies.
+- The requested `<` and `>` characters are valid on Linux filesystems, but not
+  in Windows filenames or on some removable/network filesystems. Unsupported
+  destinations report errors rather than silently changing the suffix.
+
 ## Install elsewhere / standalone Google sign-in
 
 Python 3.11+ and a graphical desktop are required. CPU inference is the default.
@@ -242,3 +272,8 @@ Exact-match priority update: 104 automated tests passed. Every non-empty exact
 OCR/camera text match is classified as SAME, including low/missing confidence,
 automatic/manual crop flags and processing warnings. Two empty readings are not
 treated as a successful plate match.
+
+DIFF image copying update: 120 automated tests passed, including literal OCR
+suffixes, DIFF-only selection independent of the UI filter, filename conflicts,
+repeat-copy detection, missing files, unsafe OCR text, symlinks, cancellation
+and partial-copy cleanup. Tests only copy synthetic local files.

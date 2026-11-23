@@ -27,6 +27,7 @@ from .core import (
     data_directory, discover_images, parse_filename,
 )
 from .sheets import run_export
+from .copying import copy_diff_images
 
 STYLE = """
 QMainWindow, QWidget { background: #0d1622; color: #dce7f3; font-family: 'DejaVu Sans'; font-size: 13px; }
@@ -180,6 +181,25 @@ class ExportWorker(QThread):
             self.completed.emit("", describe(exc))
 
 
+class CopyWorker(QThread):
+    progress = Signal(int, int)
+    completed = Signal(object, str)
+
+    def __init__(self, report, destination, parent=None):
+        super().__init__(parent)
+        self.report = report
+        self.destination = destination
+        self.cancel = threading.Event()
+
+    def run(self):
+        try:
+            summary = copy_diff_images(self.report, self.destination,
+                                       self.progress.emit, self.cancel.is_set)
+            self.completed.emit(summary, "")
+        except Exception as exc:
+            self.completed.emit(None, str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -191,6 +211,7 @@ class MainWindow(QMainWindow):
         self.preview_pixmap = None
         self.busy = False
         self.sheet_url = ""
+        self.copy_destination = ""
         self.model = ResultsModel(self)
         self.proxy = QSortFilterProxyModel(self)
         self.proxy.setSourceModel(self.model)
@@ -325,6 +346,9 @@ class MainWindow(QMainWindow):
         self.filter.currentTextChanged.connect(self._filter)
         toolbar.addWidget(self.filter)
         toolbar.addStretch()
+        self.copy_button = self._button("Copy DIFF images…", self._copy_diffs)
+        self.copy_button.setToolTip("Copies all DIFF images, regardless of the table filter; originals remain unchanged")
+        toolbar.addWidget(self.copy_button)
         self.csv_button = self._button("Save CSV…", self._save_csv)
         toolbar.addWidget(self.csv_button)
         layout.addLayout(toolbar)
@@ -485,8 +509,10 @@ class MainWindow(QMainWindow):
             widget.setEnabled(not self.busy)
         for widget in [self.csv_button, self.export, self.recover]:
             widget.setEnabled(has_results and not self.busy)
+        self.copy_button.setEnabled(has_results and not self.busy and any(
+            result.status == "DIFF" for result in self.report.results))
         self.manual_crop.setEnabled(self._selected() is not None and not self.busy)
-        self.cancel.setEnabled(self.busy and isinstance(self.worker, ScanWorker))
+        self.cancel.setEnabled(self.busy and isinstance(self.worker, (ScanWorker, CopyWorker)))
         self.open_sheet.setEnabled(bool(self.sheet_url))
 
     def _start(self):
@@ -552,10 +578,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "OCR run stopped", error)
 
     def _cancel(self):
-        if isinstance(self.worker, ScanWorker):
+        if isinstance(self.worker, (ScanWorker, CopyWorker)):
             self.worker.cancel.set()
             self.cancel.setEnabled(False)
-            self.message.setText("Stopping after the current image/model download; completed results will be saved…")
+            self.message.setText(
+                "Stopping after the current file; completed copies will be kept…"
+                if isinstance(self.worker, CopyWorker) else
+                "Stopping after the current image/model download; completed results will be saved…")
 
     def _filter(self, value):
         self.proxy.setFilterFixedString("" if value == "All results" else value)
@@ -639,6 +668,56 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 QMessageBox.warning(self, "CSV export failed", str(exc))
 
+    def _copy_diffs(self):
+        if self.busy or not self.report or not any(r.status == "DIFF" for r in self.report.results):
+            return
+        chosen = QFileDialog.getExistingDirectory(self, "Choose destination folder for DIFF images",
+                                                   self.copy_destination)
+        if not chosen:
+            return
+        destination = Path(chosen).resolve()
+        if destination.is_relative_to(Path(self.report.folder).expanduser().resolve()):
+            if QMessageBox.question(self, "Destination is inside the image source",
+                "Future scans of this folder tree will include the copies. Continue?") != QMessageBox.Yes:
+                return
+        if not self.report.complete and QMessageBox.question(self, "Copy from partial report?",
+            "This scan is incomplete. Copy all DIFF images processed so far?") != QMessageBox.Yes:
+            return
+        self.copy_destination = str(destination)
+        self._save_preferences()
+        if self.worker:
+            self.worker.deleteLater()
+        self.worker = CopyWorker(self.report, destination, self)
+        self.worker.progress.connect(self._copy_progress)
+        self.worker.completed.connect(self._copy_done)
+        self.worker.finished.connect(self._worker_finished)
+        count = sum(r.status == "DIFF" for r in self.report.results)
+        self.busy = True
+        self.progress.setRange(0, count)
+        self.progress.setValue(0)
+        self.message.setText(f"Copying {count:,} DIFF images to {destination}…")
+        self._enable()
+        self.worker.start()
+
+    def _copy_progress(self, count, total):
+        self._progress(count, total)
+        self.message.setText(f"Copying DIFF images: {count:,} / {total:,} files checked")
+
+    def _copy_done(self, summary, error):
+        if error:
+            self.message.setText("DIFF copy incomplete. Originals and existing destination files were not overwritten.")
+            QMessageBox.warning(self, "Could not complete DIFF copy", error)
+            return
+        state = "Stopped" if summary.cancelled else "Finished"
+        self.message.setText(
+            f"{state}: {summary.copied:,} copied, {summary.already_present:,} already present, "
+            f"{len(summary.errors):,} failed. Destination: {summary.destination}. Log: {summary.receipt}")
+        if summary.errors:
+            details = "\n".join(summary.errors[:10])
+            if len(summary.errors) > 10:
+                details += f"\n…and {len(summary.errors)-10} more; see the copy log."
+            QMessageBox.warning(self, "Some DIFF files could not be copied", details)
+
     def _load_report(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open report or recover checkpoint",
             str(data_directory() / "runs"), "Saved report (report.json checkpoint.jsonl)")
@@ -709,6 +788,7 @@ class MainWindow(QMainWindow):
                 "filename": {"separator": self.filename_separator.text(), **{
                     key: control.value() for key, control in self.filename_fields.items()}},
                 "filename_example": self.filename_example.text(),
+                "copy_destination": self.copy_destination,
             })
         except OSError:
             pass
@@ -725,6 +805,7 @@ class MainWindow(QMainWindow):
             self.sheet_title.setText(values.get("title", "ANPR OCR comparison"))
             self._set_filename_config(FilenameConfig(**values.get("filename", {})))
             self.filename_example.setText(values.get("filename_example", self.filename_example.text()))
+            self.copy_destination = values.get("copy_destination", "")
         except (OSError, ValueError):
             pass
 
@@ -733,6 +814,9 @@ class MainWindow(QMainWindow):
             event.ignore()
             if isinstance(self.worker, ScanWorker):
                 if QMessageBox.question(self, "Stop OCR?", "Stop after the current image and save partial results?") == QMessageBox.Yes:
+                    self._cancel()
+            elif isinstance(self.worker, CopyWorker):
+                if QMessageBox.question(self, "Stop copying?", "Stop after the current file and keep completed copies?") == QMessageBox.Yes:
                     self._cancel()
             else:
                 QMessageBox.information(self, "Export in progress", "Please wait for the current Google Sheets operation before closing.")
@@ -751,7 +835,7 @@ def main():
     # Dispose of the Qt object tree while QApplication and Python wrappers are
     # still alive. Leaving this to interpreter teardown can crash PySide6.
     if window.worker:
-        if isinstance(window.worker, ScanWorker):
+        if isinstance(window.worker, (ScanWorker, CopyWorker)):
             window.worker.cancel.set()
         window.worker.wait()
     window.deleteLater()

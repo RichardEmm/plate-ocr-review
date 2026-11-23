@@ -45,6 +45,7 @@ def test_initial_controls(window):
     assert window.start.isEnabled()
     assert not window.export.isEnabled()
     assert not window.cancel.isEnabled()
+    assert not window.copy_button.isEnabled()
     assert window.threshold.value() == 90
     assert window._filename_config() == FilenameConfig()
     assert "Camera: DOVER24" in window.filename_preview.text()
@@ -141,6 +142,31 @@ def test_clipped_filter_counter_and_color(window):
     assert window.proxy.rowCount() == 1
     assert window.stat_labels["CLIPPED"].text() == "1"
     assert window.model.data(window.model.index(0, 4), ui.Qt.ForegroundRole).name() == "#f5a36c"
+
+
+def test_copy_diffs_button_copies_all_diff_rows_regardless_of_filter(application, window, tmp_path, monkeypatch):
+    source = tmp_path / "images"
+    source.mkdir()
+    target = tmp_path / "copies"
+    target.mkdir()
+    rows = []
+    for index, status in enumerate(["DIFF", "SAME", "DIFF", "CLIPPED", "LOWCONFIDENCE"]):
+        path = source / f"{index}.jpg"
+        path.write_bytes(f"image {index}".encode())
+        rows.append(Result(str(path), ocr_plate="ABC123", status=status))
+    window.report = Report(str(source), Settings(), results=rows, complete=True)
+    window.model.replace(rows)
+    window.filter.setCurrentText("SAME")
+    window._enable()
+    assert window.copy_button.isEnabled()
+    monkeypatch.setattr(ui.QFileDialog, "getExistingDirectory", lambda *args: str(target))
+    window._copy_diffs()
+    assert window.busy
+    assert not window.copy_button.isEnabled()
+    settle(application, lambda: not window.busy)
+    assert sorted(p.name for p in target.iterdir()) == ["0_<ABC123>.jpg", "2_<ABC123>.jpg"]
+    assert "2 copied" in window.message.text()
+    assert len(list(source.iterdir())) == 5
 
 
 def test_cancel_preserves_partial_report(application, window, tmp_path, monkeypatch):
