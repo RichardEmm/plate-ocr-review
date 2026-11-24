@@ -146,9 +146,7 @@ class Result:
         # The special clipping rule takes precedence over generic low confidence.
         # A small image alone is not evidence that a character is clipped.
         elif (not self.error and normalize_plate(self.camera_plate) and self.detected_clipping
-                and readings_differ and (
-                    (valid_probs and self.confidence < .60)
-                    or len(self.ocr_plate) != len(self.camera_plate))):
+                and readings_differ):
             self.status = "CLIPPED"
         elif (self.error or self.manual_crop or self.crop_reasons or not valid_probs
                 or not self.ocr_plate.isalnum() or self.confidence < threshold):
@@ -172,8 +170,7 @@ class Result:
             reasons.append("Exact OCR/camera text match overrides confidence and crop/error warnings")
         if self.status == "CLIPPED":
             reasons.append("Clipping detected and OCR reading differs from camera")
-            if self.confidences and self.confidence < .60:
-                reasons.append("A recognised character has confidence below 60%")
+            reasons.append("Confidence and string length do not restrict the CLIPPED status")
             if len(self.ocr_plate) != len(self.camera_plate):
                 reasons.append(f"String lengths differ: OCR {len(self.ocr_plate)}, camera {len(self.camera_plate)}")
         reasons.append(f"Minimum character confidence: {self.confidence:.1%}")

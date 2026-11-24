@@ -100,11 +100,11 @@ preferences. Older saved reports without this object remain readable.
   flags, manual clipping flags or filename/processing warnings. Two empty values
   do not count as a plate match. Confidence and warnings remain visible for review.
 - **CLIPPED:** clipping is detected automatically at an image edge, or manually
-  flagged, **and the OCR and camera readings differ**, **and either** at least
-  one recognised character has confidence **below 60%** **or** the OCR string
-  length differs from the camera string length. This rule takes precedence over
-  `LOWCONFIDENCE` and uses a fixed 60% cutoff, independent of the configurable
-  high-confidence threshold. Exactly 60% does not meet the confidence condition.
+  flagged, **and the OCR and camera readings differ**, regardless of confidence
+  or string length. This rule takes precedence over `LOWCONFIDENCE` and `DIFF`.
+  For example, clipped images with differing equal-length readings and a weakest
+  character confidence of 75% (or even 99%) are `CLIPPED`. Missing or invalid
+  character confidence does not prevent this status.
 - **SAME (normalized agreement):** readings match after ignoring case and
   separators, every recognised character is at or above the threshold, and no
   crop/error flags apply. This preserves the earlier comparison behavior; only
@@ -117,12 +117,11 @@ preferences. Older saved reports without this object remain readable.
   `SAME` override nor the `CLIPPED` rule is met. Clipped images with exactly
   matching readings are labelled `SAME`, never `CLIPPED` or `LOWCONFIDENCE`.
 
-String lengths for the clipping rule use the original extracted camera text and
-OCR text. The different-reading check uses the same comparison normalization
+The different-reading check uses the same comparison normalization
 as `SAME` / `DIFF` below. A small crop by itself does not count as detected
 clipping. Filename or image/OCR errors remain `LOWCONFIDENCE` unless an exact
-non-empty text match gives `SAME`; absent confidence
-is not treated as below 60%, but a genuine OCR length mismatch can meet the rule.
+non-empty text match gives `SAME`. The clipping rule does not require any
+particular character confidence or difference in string length.
 
 Comparison ignores case, spaces and hyphens. It **does not** equate `O` with
 `0`, `I` with `1`, or similar-looking characters. The original camera reading
@@ -263,7 +262,7 @@ Filename configuration update: 69 automated tests passed, including custom
 camera names, reordered fields, alternative separators, end-relative positions,
 configuration persistence, older-report compatibility, and GUI preview validation.
 
-CLIPPED status update: 89 automated tests passed. Tests verify the strict 60%
+Historical CLIPPED status update (superseded by the rule above): 89 automated tests passed. Tests verified the strict 60%
 boundary, unequal string lengths, matching-reading exclusion, manual/automatic
 clipping, small-image exclusion, UI filtering/counts and five-column Sheet export.
 Existing reports and Google Sheets are not automatically reclassified or rewritten.

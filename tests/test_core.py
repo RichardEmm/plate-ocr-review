@@ -105,7 +105,7 @@ def test_status_rules(plate, prob, camera, status):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("crop_reasons", ["Clipped edge"]), ("manual_crop", True), ("error", "Unreadable filename"),
+    ("crop_reasons", ["Clipped edge"]), ("error", "Unreadable filename"),
     ("confidences", []), ("confidences", [.999]),
     ("confidences", [float("nan")] * 3), ("confidences", [1.1] * 3),
 ])
@@ -125,8 +125,10 @@ def test_weakest_character_not_mean():
 
 @pytest.mark.parametrize("ocr,camera,probs,clipped,status", [
     ("ABD", "ABC", [.99, .99, .59], True, "CLIPPED"),
-    ("ABD", "ABC", [.99, .99, .60], True, "LOWCONFIDENCE"),
-    ("ABD", "ABC", [.99, .99, .61], True, "LOWCONFIDENCE"),
+    ("ABD", "ABC", [.99, .99, .60], True, "CLIPPED"),
+    ("ABD", "ABC", [.99, .99, .61], True, "CLIPPED"),
+    ("ABD", "ABC", [.99, .99, .75], True, "CLIPPED"),
+    ("ABD", "ABC", [.99, .99, .99], True, "CLIPPED"),
     ("AB", "ABC", [.99, .99], True, "CLIPPED"),
     ("ABCD", "ABC", [.99] * 4, True, "CLIPPED"),
     ("AB", "ABC", [], True, "CLIPPED"),
@@ -135,7 +137,8 @@ def test_weakest_character_not_mean():
     ("ABC", "abc", [.50] * 3, True, "LOWCONFIDENCE"),
     ("ABC", "AB-C", [.99] * 3, True, "LOWCONFIDENCE"),
     ("ABD", "AB-C", [.99] * 3, True, "CLIPPED"),
-    ("ABD", "ABC", [], True, "LOWCONFIDENCE"),
+    ("ABD", "ABC", [], True, "CLIPPED"),
+    ("ABD", "ABC", [float("nan")] * 3, True, "CLIPPED"),
     ("ABD", "ABC", [.50] * 3, False, "LOWCONFIDENCE"),
     ("AB", "ABC", [.99] * 2, False, "DIFF"),
     ("ABD", "ABC", [.99] * 3, False, "DIFF"),
@@ -147,12 +150,13 @@ def test_clipped_rule(ocr, camera, probs, clipped, status):
     assert result.status == status
 
 
-def test_manual_clipping_and_fixed_confidence_cutoff():
-    result = Result("image.jpg", camera_plate="ABC", ocr_plate="ABD", confidences=[.99, .99, .59],
+@pytest.mark.parametrize("threshold", [.50, .90, 1.0])
+def test_manual_clipping_independent_of_confidence_threshold(threshold):
+    result = Result("image.jpg", camera_plate="ABC", ocr_plate="ABD", confidences=[.99, .99, .75],
                     manual_crop=True)
-    result.classify(.50)
+    result.classify(threshold)
     assert result.status == "CLIPPED"
-    assert "below 60%" in result.explanation
+    assert "Confidence and string length do not restrict" in result.explanation
     result.manual_crop = False
     result.classify(.50)
     assert result.status == "DIFF"
